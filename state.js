@@ -3,9 +3,9 @@ const { neon } = require('@neondatabase/serverless');
 const STATE_ROW_ID = 1;
 
 function getSqlClient() {
-  const databaseUrl = process.env.DATABASE_URL;
+  const databaseUrl = process.env.NETLIFY_DATABASE_URL;
   if (!databaseUrl) {
-    throw new Error('DATABASE_URL is not configured. Set it in Netlify environment variables.');
+    throw new Error('NETLIFY_DATABASE_URL is not configured. Set it in Netlify environment variables.');
   }
   return neon(databaseUrl);
 }
