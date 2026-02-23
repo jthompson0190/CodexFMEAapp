@@ -1,70 +1,8 @@
 const state = {
   currentPage: 'dashboard',
   selectedFmeaId: null,
-  fmeas: [
-    {
-      id: crypto.randomUUID(),
-      process: 'Aluminum Housing Assembly',
-      teamLeader: 'Maria Lopez',
-      processOwner: 'R. Simmons',
-      creationDate: '2026-01-05',
-      revisionDate: '2026-02-01',
-      status: 'Draft',
-      processSteps: [
-        {
-          id: crypto.randomUUID(),
-          stepNumber: 1,
-          name: 'Load raw casting into fixture',
-          stepDescription: 'Operator loads cast part and verifies seating before clamping.',
-          collapsed: false,
-          equipments: [
-            {
-              id: crypto.randomUUID(),
-              description: 'Primary clamping fixture',
-              functionalLocation: 'LINE-A-ST01',
-              equipmentNumber: 'EQ-1001',
-              materialNumber: 'MAT-8891',
-              collapsed: false,
-              failureModes: [
-                {
-                  id: crypto.randomUUID(),
-                  equipmentClass: 'Hydraulic Fixture',
-                  mode: 'Incorrect clamp pressure',
-                  effects: 'Part deformation',
-                  cause: 'Pressure regulator drift',
-                  controls: 'Daily calibration check',
-                  collapsed: false,
-                  severity: 8,
-                  occurrence: 5,
-                  detection: 4,
-                  actions: [
-                    {
-                      id: crypto.randomUUID(),
-                      text: 'Install digital pressure monitor',
-                      workOrder: 'WO-10077',
-                      responsible: 'Maintenance',
-                      targetDate: '2026-03-01',
-                      status: 'Not Started'
-                    }
-                  ]
-                }
-              ]
-            }
-          ]
-        }
-      ]
-    }
-  ],
-  templates: [
-    {
-      id: crypto.randomUUID(),
-      equipmentType: 'Hydraulic Fixture',
-      classDescription: 'Fixture used to hold and clamp castings during operation.',
-      defaultFailureModes: 'Clamp pressure drift;Fixture jaw wear',
-      defaultCauses: 'Regulator aging;Lubrication not applied',
-      defaultControls: 'Daily pressure check;PM lubrication schedule'
-    }
-  ],
+  fmeas: [],
+  templates: [],
   equipmentSearch: {
     equipmentClass: '',
     description: '',
