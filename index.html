@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FMEA Manager</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside id="sideMenu" class="side-menu" aria-label="Main navigation">
+        <div class="menu-header">
+          <h1>FMEA Manager</h1>
+          <button id="closeMenuBtn" class="icon-btn" aria-label="Close menu">✕</button>
+        </div>
+        <button id="menuCreateBtn" class="primary-btn">+ New FMEA</button>
+        <nav>
+          <button data-page="dashboard" class="nav-btn active">Dashboard</button>
+          <button data-page="fmea" class="nav-btn">FMEA Details</button>
+          <button data-page="actions" class="nav-btn">Actions</button>
+          <button data-page="equipment" class="nav-btn">Equipment</button>
+          <button data-page="templates" class="nav-btn">Equipment Templates</button>
+        </nav>
+      </aside>
+
+      <div id="menuOverlay" class="menu-overlay"></div>
+
+      <main class="main-content">
+        <header class="top-bar">
+          <div class="top-left">
+            <button id="openMenuBtn" class="icon-btn" aria-label="Open menu">☰</button>
+            <h2 id="pageTitle">Dashboard</h2>
+          </div>
+          <button id="topCreateBtn" class="primary-btn">+ New FMEA</button>
+        </header>
+
+        <section id="dashboardPage" class="page active">
+          <div class="card-grid kpis" id="kpiCards"></div>
+          <div class="card">
+            <div class="card-header">
+              <h3>All FMEAs</h3>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Process</th>
+                    <th>Team Leader</th>
+                    <th>Process Owner</th>
+                    <th>Revision Date</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="fmeaTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section id="fmeaPage" class="page">
+          <div class="card">
+            <div class="card-header">
+              <h3>FMEA Header</h3>
+              <button id="backToDashboardBtn" class="secondary-btn">← Back to Dashboard Overview</button>
+            </div>
+            <form id="fmeaForm" class="form-grid"></form>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h3>Process Steps (drag to reorder)</h3>
+              <button id="addStepBtn" class="secondary-btn">+ Add Step</button>
+            </div>
+            <div id="processSteps" class="steps-container"></div>
+          </div>
+        </section>
+
+        <section id="actionsPage" class="page">
+          <div class="card-grid kpis" id="actionKpiCards"></div>
+          <div class="card">
+            <h3>Action Register</h3>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Action</th>
+                    <th>Work Order</th>
+                    <th>Responsible</th>
+                    <th>Process Owner</th>
+                    <th>Target Date</th>
+                    <th>Status</th>
+                    <th>Failure Mode</th>
+                  </tr>
+                </thead>
+                <tbody id="actionsTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section id="equipmentPage" class="page">
+          <div class="card">
+            <h3>Equipment Registry</h3>
+            <div id="equipmentSearch" class="equipment-search-grid"></div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Equipment Class</th>
+                    <th>Description</th>
+                    <th>Functional Location</th>
+                    <th>Equipment Number</th>
+                    <th>Material Number</th>
+                    <th>Process</th>
+                    <th>Step</th>
+                  </tr>
+                </thead>
+                <tbody id="equipmentTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section id="templatesPage" class="page">
+          <div class="card">
+            <div class="card-header">
+              <h3>Equipment Templates</h3>
+              <button id="addTemplateBtn" class="secondary-btn">+ Add Template</button>
+            </div>
+            <div id="templateList" class="template-list"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="fmeaDialog" class="modal">
+      <form id="newFmeaForm" method="dialog" class="modal-body">
+        <h3>Create New FMEA</h3>
+        <label>Process <input name="process" required /></label>
+        <label>Team Leader <input name="teamLeader" required /></label>
+        <label>Process Owner <input name="processOwner" required /></label>
+        <label>Creation Date <input type="date" name="creationDate" required /></label>
+        <label>Revision Date <input type="date" name="revisionDate" required /></label>
+        <label
+          >Status
+          <select name="status">
+            <option>Draft</option>
+            <option>Complete</option>
+          </select>
+        </label>
+        <div class="modal-actions">
+          <button type="button" id="cancelCreateBtn" class="secondary-btn">Cancel</button>
+          <button type="submit" class="primary-btn">Create</button>
+        </div>
+      </form>
+    </dialog>
+
+    <footer class="footer-actions">
+      <button id="pdfBtn" class="secondary-btn">Generate PDF</button>
+      <button id="excelBtn" class="secondary-btn">Export to Excel</button>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>
