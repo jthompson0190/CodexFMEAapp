@@ -42,6 +42,7 @@ async function ensureSchema(sql) {
       functional_location TEXT,
       equipment_number TEXT,
       material_number TEXT,
+      equipment_class TEXT,
       collapsed BOOLEAN NOT NULL DEFAULT FALSE
     );
   `;
@@ -50,7 +51,6 @@ async function ensureSchema(sql) {
     CREATE TABLE IF NOT EXISTS failure_modes (
       id TEXT PRIMARY KEY,
       equipment_id TEXT NOT NULL REFERENCES equipments(id) ON DELETE CASCADE,
-      equipment_class TEXT,
       mode TEXT,
       effects TEXT,
       cause TEXT,
@@ -79,9 +79,7 @@ async function ensureSchema(sql) {
       id TEXT PRIMARY KEY,
       equipment_type TEXT,
       class_description TEXT,
-      default_failure_modes TEXT,
-      default_causes TEXT,
-      default_controls TEXT
+      failure_modes JSONB NOT NULL DEFAULT '[]'::jsonb
     );
   `;
 
@@ -95,6 +93,9 @@ async function ensureSchema(sql) {
     );
   `;
 }
+
+  await sql`ALTER TABLE equipments ADD COLUMN IF NOT EXISTS equipment_class TEXT`;
+  await sql`ALTER TABLE equipment_templates ADD COLUMN IF NOT EXISTS failure_modes JSONB NOT NULL DEFAULT '[]'::jsonb`;
 
 function safeArray(value) {
   return Array.isArray(value) ? value : [];
@@ -136,7 +137,6 @@ exports.handler = async (event) => {
       const fmByEquipment = failureModes.reduce((acc, fm) => {
         (acc[fm.equipment_id] ||= []).push({
           id: fm.id,
-          equipmentClass: fm.equipment_class || '',
           mode: fm.mode || '',
           effects: fm.effects || '',
           cause: fm.cause || '',
@@ -157,6 +157,7 @@ exports.handler = async (event) => {
           functionalLocation: eq.functional_location || '',
           equipmentNumber: eq.equipment_number || '',
           materialNumber: eq.material_number || '',
+          equipmentClass: eq.equipment_class || '',
           collapsed: !!eq.collapsed,
           failureModes: fmByEquipment[eq.id] || []
         });
@@ -189,9 +190,7 @@ exports.handler = async (event) => {
           id: t.id,
           equipmentType: t.equipment_type || '',
           classDescription: t.class_description || '',
-          defaultFailureModes: t.default_failure_modes || '',
-          defaultCauses: t.default_causes || '',
-          defaultControls: t.default_controls || ''
+          failureModes: Array.isArray(t.failure_modes) ? t.failure_modes : []
         })),
         fmeas: fmeas.map((f) => ({
           id: f.id,
@@ -252,14 +251,14 @@ exports.handler = async (event) => {
 
             for (const eq of safeArray(step.equipments)) {
               await sql`
-                INSERT INTO equipments (id, process_step_id, description, functional_location, equipment_number, material_number, collapsed)
-                VALUES (${eq.id}, ${step.id}, ${eq.description || ''}, ${eq.functionalLocation || ''}, ${eq.equipmentNumber || ''}, ${eq.materialNumber || ''}, ${!!eq.collapsed})
+                INSERT INTO equipments (id, process_step_id, description, functional_location, equipment_number, material_number, equipment_class, collapsed)
+                VALUES (${eq.id}, ${step.id}, ${eq.description || ''}, ${eq.functionalLocation || ''}, ${eq.equipmentNumber || ''}, ${eq.materialNumber || ''}, ${eq.equipmentClass || ''}, ${!!eq.collapsed})
               `;
 
               for (const fm of safeArray(eq.failureModes)) {
                 await sql`
-                  INSERT INTO failure_modes (id, equipment_id, equipment_class, mode, effects, cause, controls, collapsed, severity, occurrence, detection)
-                  VALUES (${fm.id}, ${eq.id}, ${fm.equipmentClass || ''}, ${fm.mode || ''}, ${fm.effects || ''}, ${fm.cause || ''}, ${fm.controls || ''},
+                  INSERT INTO failure_modes (id, equipment_id, mode, effects, cause, controls, collapsed, severity, occurrence, detection)
+                  VALUES (${fm.id}, ${eq.id}, ${fm.mode || ''}, ${fm.effects || ''}, ${fm.cause || ''}, ${fm.controls || ''},
                           ${!!fm.collapsed}, ${Number(fm.severity || 1)}, ${Number(fm.occurrence || 1)}, ${Number(fm.detection || 1)})
                 `;
 
@@ -277,8 +276,8 @@ exports.handler = async (event) => {
 
         for (const t of templates) {
           await sql`
-            INSERT INTO equipment_templates (id, equipment_type, class_description, default_failure_modes, default_causes, default_controls)
-            VALUES (${t.id}, ${t.equipmentType || ''}, ${t.classDescription || ''}, ${t.defaultFailureModes || ''}, ${t.defaultCauses || ''}, ${t.defaultControls || ''})
+            INSERT INTO equipment_templates (id, equipment_type, class_description, failure_modes)
+            VALUES (${t.id}, ${t.equipmentType || ''}, ${t.classDescription || ''}, ${JSON.stringify(t.failureModes || [])}::jsonb)
           `;
         }
 

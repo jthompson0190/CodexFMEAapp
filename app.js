@@ -22,15 +22,45 @@ const pages = {
 
 const API_STATE_ENDPOINT = '/api/state';
 
-function saveState() {
-  localStorage.setItem('fmeaState', JSON.stringify(state));
-  fetch(API_STATE_ENDPOINT, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(state)
-  }).catch(() => {
+let saveTimer = null;
+let saveInFlight = false;
+let pendingSave = false;
+
+function snapshotState() {
+  return JSON.stringify(state);
+}
+
+function scheduleRemoteSave() {
+  pendingSave = true;
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(flushRemoteSave, 250);
+}
+
+async function flushRemoteSave() {
+  if (saveInFlight || !pendingSave) return;
+  pendingSave = false;
+  saveInFlight = true;
+  const payload = snapshotState();
+
+  try {
+    await fetch(API_STATE_ENDPOINT, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: payload
+    });
+  } catch (_error) {
     // Keep localStorage as offline fallback if backend is unavailable.
-  });
+  } finally {
+    saveInFlight = false;
+    if (pendingSave) {
+      flushRemoteSave();
+    }
+  }
+}
+
+function saveState() {
+  localStorage.setItem('fmeaState', snapshotState());
+  scheduleRemoteSave();
 }
 
 async function loadState() {
@@ -93,6 +123,7 @@ function migrateState() {
         collapsed: Boolean(step.collapsed),
         equipments: equipments.map((eq) => ({
           id: eq.id || crypto.randomUUID(),
+          equipmentClass: eq.equipmentClass || (eq.failureModes || [])[0]?.equipmentClass || '',
           description: eq.description || '',
           functionalLocation: eq.functionalLocation || '',
           equipmentNumber: eq.equipmentNumber || '',
@@ -100,7 +131,6 @@ function migrateState() {
           collapsed: Boolean(eq.collapsed),
           failureModes: (eq.failureModes || []).map((fm) => ({
             id: fm.id || crypto.randomUUID(),
-            equipmentClass: fm.equipmentClass || eq.className || '',
             mode: fm.mode || '',
             effects: fm.effects || '',
             cause: fm.cause || '',
@@ -123,14 +153,40 @@ function migrateState() {
     })
   }));
 
-  state.templates = (state.templates || []).map((t) => ({
-    id: t.id || crypto.randomUUID(),
-    equipmentType: (t.equipmentType || '').trim(),
-    classDescription: t.classDescription || '',
-    defaultFailureModes: t.defaultFailureModes || '',
-    defaultCauses: t.defaultCauses || '',
-    defaultControls: t.defaultControls || ''
-  }));
+  state.templates = (state.templates || []).map((t) => {
+    const legacyModes = splitSemicolon(t.defaultFailureModes || '');
+    const legacyCauses = splitSemicolon(t.defaultCauses || '');
+    const legacyControls = splitSemicolon(t.defaultControls || '');
+    const legacyCount = Math.max(legacyModes.length, legacyCauses.length, legacyControls.length, 0);
+    return {
+      id: t.id || crypto.randomUUID(),
+      equipmentType: (t.equipmentType || '').trim(),
+      classDescription: t.classDescription || '',
+      failureModes: Array.isArray(t.failureModes)
+        ? t.failureModes.map((fm) => ({
+            id: fm.id || crypto.randomUUID(),
+            mode: fm.mode || '',
+            effects: fm.effects || '',
+            cause: fm.cause || '',
+            controls: fm.controls || '',
+            severity: Number(fm.severity || 1),
+            occurrence: Number(fm.occurrence || 1),
+            detection: Number(fm.detection || 1),
+            collapsed: Boolean(fm.collapsed)
+          }))
+        : Array.from({ length: legacyCount }, (_, i) => ({
+            id: crypto.randomUUID(),
+            mode: legacyModes[i] || '',
+            effects: '',
+            cause: legacyCauses[i] || '',
+            controls: legacyControls[i] || '',
+            severity: 1,
+            occurrence: 1,
+            detection: 1,
+            collapsed: false
+          }))
+    };
+  });
 }
 
 function actionStatuses() {
@@ -165,6 +221,20 @@ function actionStatusClass(action) {
 
 function getEquipmentClassOptions() {
   return [...new Set(state.templates.map((t) => t.equipmentType).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+}
+
+function ensureTemplateForEquipmentClass(equipmentClass) {
+  const normalized = String(equipmentClass || '').trim();
+  if (!normalized) return;
+  const exists = state.templates.some((t) => (t.equipmentType || '').trim().toLowerCase() === normalized.toLowerCase());
+  if (!exists) {
+    state.templates.push({
+      id: crypto.randomUUID(),
+      equipmentType: normalized,
+      classDescription: '',
+      failureModes: []
+    });
+  }
 }
 
 function setPage(name) {
@@ -283,14 +353,14 @@ function equipmentHtml(stepId, eq) {
           <label>Equipment Number <input data-eq-field="equipmentNumber" value="${eq.equipmentNumber || ''}" ${disabledAttr()} /></label>
           <label>Material Number <input data-eq-field="materialNumber" value="${eq.materialNumber || ''}" ${disabledAttr()} /></label>
         </div>
-        <label>Apply Equipment Class Template
-          <select data-template-select="${eq.id}" ${disabledAttr()}>
-            <option value="">Select template...</option>
-            ${state.templates.map((t) => `<option value="${t.id}">${t.equipmentType || 'Unnamed Template'}</option>`).join('')}
-          </select>
+        <label>Equipment Class
+          <input list="equipment-class-options" data-eq-field="equipmentClass" value="${eq.equipmentClass || ''}" ${disabledAttr()} />
+          <datalist id="equipment-class-options">
+            ${getEquipmentClassOptions().map((c) => `<option value="${c}"></option>`).join('')}
+          </datalist>
         </label>
         <div class="inline-actions">
-          <button class="secondary-btn" data-apply-template="${stepId}|${eq.id}" ${disabledAttr()}>Add Template Failure Modes</button>
+          <button class="secondary-btn" data-apply-template="${stepId}|${eq.id}" ${disabledAttr()}>Pull Template Failure Modes</button>
           <button class="secondary-btn" data-add-fm="${stepId}|${eq.id}" ${disabledAttr()}>+ Failure Mode</button>
           <button class="secondary-btn" data-create-template-from-equipment="${stepId}|${eq.id}" ${disabledAttr()}>Create Template from Equipment</button>
         </div>
@@ -310,12 +380,6 @@ function failureModeHtml(stepId, equipmentId, fm) {
         <span class="summary-kpis">RPN: <strong>${rpn(fm)}</strong> | Open Actions: <strong>${openActions}</strong></span>
       </summary>
       <div class="failure-mode-content">
-        <label>Equipment Class
-          <select data-fm-field="equipmentClass" ${disabledAttr()}>
-            <option value="">Select class...</option>
-            ${getEquipmentClassOptions().map((c) => `<option ${fm.equipmentClass === c ? 'selected' : ''}>${c}</option>`).join('')}
-          </select>
-        </label>
         <div class="failure-mode-fields">
           <label>Failure Mode <textarea rows="3" data-fm-field="mode" ${disabledAttr()}>${fm.mode || ''}</textarea></label>
           <label>Effects of Failure Mode <textarea rows="3" data-fm-field="effects" ${disabledAttr()}>${fm.effects || ''}</textarea></label>
@@ -379,6 +443,7 @@ function wireStepInteractions(card, fmea, step) {
   card.querySelector('[data-add-equipment]').addEventListener('click', () => {
     step.equipments.push({
       id: crypto.randomUUID(),
+      equipmentClass: '',
       description: '',
       functionalLocation: '',
       equipmentNumber: '',
@@ -408,30 +473,29 @@ function wireStepInteractions(card, fmea, step) {
     eqEl.querySelectorAll('[data-eq-field]').forEach((input) => {
       input.addEventListener('change', (e) => {
         equipment[e.target.dataset.eqField] = e.target.value;
+        if (e.target.dataset.eqField === 'equipmentClass') {
+          ensureTemplateForEquipmentClass(e.target.value);
+        }
         saveState();
+        renderAll();
       });
     });
     eqEl.querySelector('[data-apply-template]')?.addEventListener('click', (e) => {
       const equipmentId = e.target.dataset.applyTemplate.split('|')[1];
-      const select = eqEl.querySelector(`[data-template-select="${equipmentId}"]`);
-      const template = state.templates.find((t) => t.id === select.value);
+      const targetEq = step.equipments.find((x) => x.id === equipmentId);
+      const template = state.templates.find((t) => t.equipmentType === targetEq.equipmentClass);
       if (!template) return;
-      const modes = splitSemicolon(template.defaultFailureModes);
-      const causes = splitSemicolon(template.defaultCauses);
-      const controls = splitSemicolon(template.defaultControls);
-      const maxCount = Math.max(modes.length, causes.length, controls.length, 1);
-      for (let i = 0; i < maxCount; i++) {
+      for (const tfm of (template.failureModes || [])) {
         equipment.failureModes.push({
           id: crypto.randomUUID(),
-          equipmentClass: template.equipmentType,
-          mode: modes[i] || '',
-          effects: '',
-          cause: causes[i] || '',
-          controls: controls[i] || '',
+          mode: tfm.mode || '',
+          effects: tfm.effects || '',
+          cause: tfm.cause || '',
+          controls: tfm.controls || '',
           collapsed: false,
-          severity: 1,
-          occurrence: 1,
-          detection: 1,
+          severity: Number(tfm.severity || 1),
+          occurrence: Number(tfm.occurrence || 1),
+          detection: Number(tfm.detection || 1),
           actions: []
         });
       }
@@ -446,7 +510,6 @@ function wireStepInteractions(card, fmea, step) {
       const target = step.equipments.find((x) => x.id === equipmentId);
       target.failureModes.push({
         id: crypto.randomUUID(),
-        equipmentClass: '',
         mode: '',
         effects: '',
         cause: '',
@@ -557,7 +620,7 @@ function renderActions() {
         <td>${fmea.processOwner}</td>
         <td><input type="date" data-table-action="targetDate" data-action-id="${action.id}" value="${action.targetDate}" ${readOnly ? 'disabled' : ''} /></td>
         <td><select data-table-action="status" data-action-id="${action.id}" ${readOnly ? 'disabled' : ''}>${actionStatuses().map((s) => `<option ${action.status === s ? 'selected' : ''}>${s}</option>`).join('')}</select></td>
-        <td>${fm.equipmentClass || 'Unclassified'}: ${fm.mode || 'Unnamed Failure Mode'}</td>
+        <td>${equipment.equipmentClass || 'Unclassified'}: ${fm.mode || 'Unnamed Failure Mode'}</td>
       </tr>`
     )
     .join('');
@@ -600,7 +663,7 @@ function flattenEquipment() {
         fmea,
         step,
         equipment: eq,
-        equipmentClasses: [...new Set(eq.failureModes.map((fm) => fm.equipmentClass).filter(Boolean))]
+        equipmentClasses: [eq.equipmentClass].filter(Boolean)
       }))
     )
   );
@@ -649,6 +712,30 @@ function renderEquipmentPage() {
   });
 }
 
+function templateFailureModeHtml(templateId, fm) {
+  return `<details class="failure-mode" data-template-fm-id="${fm.id}" ${fm.collapsed ? '' : 'open'}>
+    <summary class="failure-mode-summary">
+      <strong>${fm.mode || 'Unnamed Failure Mode'}</strong>
+      <span class="summary-kpis">RPN: <strong>${rpn(fm)}</strong></span>
+    </summary>
+    <div class="failure-mode-content">
+      <div class="failure-mode-fields">
+        <label>Failure Mode <textarea rows="3" data-template-fm-field="mode" data-template-id="${templateId}" data-template-fm-id="${fm.id}">${fm.mode || ''}</textarea></label>
+        <label>Effects of Failure Mode <textarea rows="3" data-template-fm-field="effects" data-template-id="${templateId}" data-template-fm-id="${fm.id}">${fm.effects || ''}</textarea></label>
+        <label>Potential Cause of Failure <textarea rows="3" data-template-fm-field="cause" data-template-id="${templateId}" data-template-fm-id="${fm.id}">${fm.cause || ''}</textarea></label>
+        <label>Current Controls <textarea rows="3" data-template-fm-field="controls" data-template-id="${templateId}" data-template-fm-id="${fm.id}">${fm.controls || ''}</textarea></label>
+      </div>
+      <div class="form-grid">
+        <label>Severity <input type="number" min="1" max="10" data-template-fm-field="severity" data-template-id="${templateId}" data-template-fm-id="${fm.id}" value="${fm.severity || 1}" /></label>
+        <label>Occurrence <input type="number" min="1" max="10" data-template-fm-field="occurrence" data-template-id="${templateId}" data-template-fm-id="${fm.id}" value="${fm.occurrence || 1}" /></label>
+        <label>Detection <input type="number" min="1" max="10" data-template-fm-field="detection" data-template-id="${templateId}" data-template-fm-id="${fm.id}" value="${fm.detection || 1}" /></label>
+        <label>RPN Score <input disabled value="${rpn(fm)}" /></label>
+      </div>
+      <button class="danger-btn" data-remove-template-fm="${templateId}|${fm.id}">Remove Failure Mode</button>
+    </div>
+  </details>`;
+}
+
 function renderTemplates() {
   const list = document.getElementById('templateList');
   list.innerHTML = state.templates
@@ -656,16 +743,56 @@ function renderTemplates() {
       (t) => `<article class="template-item">
       <label>Equipment Class <input data-template-field="equipmentType" data-template-id="${t.id}" value="${t.equipmentType}" /></label>
       <label>Class Description <input data-template-field="classDescription" data-template-id="${t.id}" value="${t.classDescription}" /></label>
-      <label>Default Failure Modes (semicolon separated)<textarea data-template-field="defaultFailureModes" data-template-id="${t.id}">${t.defaultFailureModes}</textarea></label>
-      <label>Default Causes of Failure (semicolon separated)<textarea data-template-field="defaultCauses" data-template-id="${t.id}">${t.defaultCauses}</textarea></label>
-      <label>Default Controls (semicolon separated)<textarea data-template-field="defaultControls" data-template-id="${t.id}">${t.defaultControls}</textarea></label>
+      <div class="inline-actions"><button class="secondary-btn" data-add-template-fm="${t.id}">+ Failure Mode</button></div>
+      <div>${(t.failureModes || []).map((fm) => templateFailureModeHtml(t.id, fm)).join('')}</div>
     </article>`
     )
     .join('');
+
   document.querySelectorAll('[data-template-field]').forEach((el) => {
     el.addEventListener('change', (e) => {
       const t = state.templates.find((x) => x.id === e.target.dataset.templateId);
       t[e.target.dataset.templateField] = e.target.value;
+      saveState();
+      renderAll();
+    });
+  });
+
+  document.querySelectorAll('[data-add-template-fm]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const t = state.templates.find((x) => x.id === btn.dataset.addTemplateFm);
+      t.failureModes.push({
+        id: crypto.randomUUID(),
+        mode: '',
+        effects: '',
+        cause: '',
+        controls: '',
+        severity: 1,
+        occurrence: 1,
+        detection: 1,
+        collapsed: false
+      });
+      saveState();
+      renderAll();
+    });
+  });
+
+  document.querySelectorAll('[data-template-fm-field]').forEach((el) => {
+    el.addEventListener('change', (e) => {
+      const t = state.templates.find((x) => x.id === e.target.dataset.templateId);
+      const fm = (t.failureModes || []).find((x) => x.id === e.target.dataset.templateFmId);
+      const field = e.target.dataset.templateFmField;
+      fm[field] = ['severity', 'occurrence', 'detection'].includes(field) ? Number(e.target.value) : e.target.value;
+      saveState();
+      renderAll();
+    });
+  });
+
+  document.querySelectorAll('[data-remove-template-fm]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const [templateId, fmId] = btn.dataset.removeTemplateFm.split('|');
+      const t = state.templates.find((x) => x.id === templateId);
+      t.failureModes = (t.failureModes || []).filter((x) => x.id !== fmId);
       saveState();
       renderAll();
     });
@@ -690,7 +817,7 @@ function createTemplateFromEquipment(equipment) {
     window.alert('Cannot create template: this equipment has no failure modes.');
     return;
   }
-  const suggestedName = equipment.failureModes.find((fm) => fm.equipmentClass)?.equipmentClass || '';
+  const suggestedName = equipment.equipmentClass || '';
   const equipmentType = window.prompt('Enter Equipment Class name for the new template:', suggestedName);
   if (!equipmentType || !equipmentType.trim()) return;
 
@@ -698,9 +825,17 @@ function createTemplateFromEquipment(equipment) {
     id: crypto.randomUUID(),
     equipmentType: equipmentType.trim(),
     classDescription: equipment.description || '',
-    defaultFailureModes: equipment.failureModes.map((fm) => fm.mode || '').filter(Boolean).join(';'),
-    defaultCauses: equipment.failureModes.map((fm) => fm.cause || '').filter(Boolean).join(';'),
-    defaultControls: equipment.failureModes.map((fm) => fm.controls || '').filter(Boolean).join(';')
+    failureModes: equipment.failureModes.map((fm) => ({
+      id: crypto.randomUUID(),
+      mode: fm.mode || '',
+      effects: fm.effects || '',
+      cause: fm.cause || '',
+      controls: fm.controls || '',
+      severity: Number(fm.severity || 1),
+      occurrence: Number(fm.occurrence || 1),
+      detection: Number(fm.detection || 1),
+      collapsed: false
+    }))
   });
   saveState();
   renderAll();
@@ -758,12 +893,64 @@ document.body.addEventListener('click', (e) => {
 });
 
 document.getElementById('addTemplateBtn').addEventListener('click', () => {
-  state.templates.push({ id: crypto.randomUUID(), equipmentType: '', classDescription: '', defaultFailureModes: '', defaultCauses: '', defaultControls: '' });
+  state.templates.push({ id: crypto.randomUUID(), equipmentType: '', classDescription: '', failureModes: [] });
   saveState();
   renderAll();
 });
 
-document.getElementById('pdfBtn').addEventListener('click', () => window.print());
+function generatePdfReport() {
+  const reportHtml = state.fmeas
+    .map(
+      (fmea) => `<section class="report-fmea">
+      <h2>${fmea.process || 'Unnamed Process'}</h2>
+      <p><strong>Team Leader:</strong> ${fmea.teamLeader || ''} | <strong>Process Owner:</strong> ${fmea.processOwner || ''} | <strong>Status:</strong> ${fmea.status}</p>
+      ${fmea.processSteps
+        .map(
+          (step) => `<article>
+          <h3>Step ${step.stepNumber}: ${step.name || 'Unnamed Step'}</h3>
+          <p>${step.stepDescription || ''}</p>
+          ${step.equipments
+            .map(
+              (eq) => `<div>
+              <h4>Equipment: ${eq.equipmentNumber || eq.description || 'Unnamed Equipment'} (${eq.equipmentClass || 'Unclassified'})</h4>
+              <p>Desc: ${eq.description || ''} | FL: ${eq.functionalLocation || ''} | Eq#: ${eq.equipmentNumber || ''} | Material#: ${eq.materialNumber || ''}</p>
+              ${eq.failureModes
+                .map(
+                  (fm) => `<div style="border:1px solid #ddd;padding:8px;margin:8px 0;">
+                  <p><strong>Failure Mode:</strong> ${fm.mode || ''}</p>
+                  <p><strong>Effects:</strong> ${fm.effects || ''}</p>
+                  <p><strong>Cause:</strong> ${fm.cause || ''}</p>
+                  <p><strong>Controls:</strong> ${fm.controls || ''}</p>
+                  <p><strong>RPN:</strong> ${rpn(fm)}</p>
+                  <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                    <thead><tr><th style="border:1px solid #ddd;padding:4px;">Action</th><th style="border:1px solid #ddd;padding:4px;">Work Order</th><th style="border:1px solid #ddd;padding:4px;">Responsible</th><th style="border:1px solid #ddd;padding:4px;">Target</th><th style="border:1px solid #ddd;padding:4px;">Status</th></tr></thead>
+                    <tbody>${fm.actions
+                      .map(
+                        (a) => `<tr><td style="border:1px solid #ddd;padding:4px;">${a.text || ''}</td><td style="border:1px solid #ddd;padding:4px;">${a.workOrder || ''}</td><td style="border:1px solid #ddd;padding:4px;">${a.responsible || ''}</td><td style="border:1px solid #ddd;padding:4px;">${a.targetDate || ''}</td><td style="border:1px solid #ddd;padding:4px;">${a.status || ''}</td></tr>`
+                      )
+                      .join('')}</tbody>
+                  </table>
+                </div>`
+                )
+                .join('')}
+            </div>`
+            )
+            .join('')}
+        </article>`
+        )
+        .join('')}
+    </section>`
+    )
+    .join('');
+
+  const win = window.open('', '_blank');
+  win.document.write(`<!doctype html><html><head><title>FMEA Report</title><style>body{font-family:Arial,sans-serif;padding:20px;color:#111}h2{border-bottom:2px solid #333;padding-bottom:4px}h3{margin-top:16px}section{page-break-after:always}section:last-child{page-break-after:auto}</style></head><body><h1>FMEA Report</h1>${reportHtml}</body></html>`);
+  win.document.close();
+  win.focus();
+  win.print();
+}
+
+document.getElementById('pdfBtn').addEventListener('click', generatePdfReport);
 document.getElementById('excelBtn').addEventListener('click', () => {
   const rows = flattenActions();
   const csv = [
@@ -774,7 +961,7 @@ document.getElementById('excelBtn').addEventListener('click', () => {
         step.stepNumber,
         quote(equipment.description),
         quote(equipment.equipmentNumber),
-        quote(fm.equipmentClass),
+        quote(equipment.equipmentClass),
         quote(fm.mode),
         quote(action.text),
         quote(action.workOrder),
